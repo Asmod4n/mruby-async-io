@@ -9,6 +9,10 @@ while (timeout = ares.timeout)
   res = poll.wait(timeout * 1000.0) do |pfd|
     ares.process_fd((pfd.readable?) ? pfd.socket : -1, (pfd.writable?) ? pfd.socket : -1)
   end
+  poll.clear
+  ares.getsock do |socket|
+    poll.add(socket.socket, (socket.readable? ? Poll::In : 0) | (socket.writable? ? Poll::Out : 0))
+  end
   unless res
     puts res.inspect
   end

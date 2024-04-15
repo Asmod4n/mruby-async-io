@@ -1,9 +1,9 @@
-class Async::IO::Timers_Tickets
+class Async::Timers_Tickets
   attr_reader :ticket_delay
 
   def initialize(ticket_delay)
-    @timers = []
-    @tickets = []
+    @timers   = []
+    @tickets  = []
     @ticket_delay = ticket_delay
   end
 
@@ -16,10 +16,12 @@ class Async::IO::Timers_Tickets
 
   def timers_sort
     @timers.sort!
+    self
   end
 
   def timer_remove(timer)
     @timers.delete(timer)
+    @timers.sort!
     self
   end
 
@@ -32,30 +34,30 @@ class Async::IO::Timers_Tickets
   def ticket_reset(ticket)
     ticket = @tickets.delete_at(@tickets.rindex(ticket))
     @tickets << ticket
-    ticket.when = Chrono::Steady.now + @ticket_delay
+    ticket.when = Chrono.steady + @ticket_delay
     self
   end
 
   def ticket_delete(ticket)
-    @tickets.delete_at(@tickets.rindex(ticket))
+    @tickets.delete_at(@tickets.index(ticket))
     self
   end
 
   def timeout
-    wann = Chrono::Steady.now + 1000
+    wann = Chrono.steady
     unless @timers.empty?
       wann = @timers.min.when
     end
     if (ticket = @tickets.first)
       wann = ticket.when if wann > ticket.when
     end
-    tickless = wann - Chrono::Steady.now
+    tickless = wann - Chrono.steady
     tickless < 0 ? 0 : tickless
   end
 
   def execute
-    now = Chrono::Steady.now
-    @timers.take_while {|timer| now >= timer.when}.each {|timer| timer.call}
+    now = Chrono.steady
+    @timers.take_while  {|timer | now >= timer.when }.each {|timer | timer.call}
     @tickets.take_while {|ticket| now >= ticket.when}.each {|ticket| ticket.call}
     self
   end
@@ -64,7 +66,7 @@ class Async::IO::Timers_Tickets
     attr_reader :delay, :times, :when
 
     def initialize(timers_tickets, delay, times = nil, &block)
-      @when = Chrono::Steady.now + delay
+      @when = Chrono.steady + delay
       @timers_tickets = timers_tickets
       @delay = delay
       @times = times
@@ -76,7 +78,7 @@ class Async::IO::Timers_Tickets
     end
 
     def delay=(delay)
-      @when = Chrono::Steady.now + delay
+      @when = Chrono.steady + delay
       @delay = delay
     end
 
@@ -85,7 +87,7 @@ class Async::IO::Timers_Tickets
     end
 
     def reset
-      @when = Chrono::Steady.now + @delay
+      @when = Chrono.steady + @delay
       @timers_tickets.timers_sort
     end
 
@@ -109,7 +111,7 @@ class Async::IO::Timers_Tickets
     def initialize(timers_tickets, &block)
       @timers_tickets = timers_tickets
       @block = block
-      @when = Chrono::Steady.now + timers_tickets.ticket_delay
+      @when = Chrono.steady + timers_tickets.ticket_delay
     end
 
     def reset

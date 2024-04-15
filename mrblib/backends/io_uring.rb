@@ -15,7 +15,7 @@ class Async::IO::IO_Uring < Async::IO::Backend
     Fiber.yield
   end
 
-  def run_once(timeout = 0.0)
+  def run_once(timeout = -1.0)
     @uring.wait(timeout) do |userdata|
       raise userdata.errno if userdata.errno
       fiber, operation = @operations.shift
