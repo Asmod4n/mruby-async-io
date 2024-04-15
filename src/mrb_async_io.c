@@ -151,13 +151,17 @@ mrb_ares_new(mrb_state *mrb, mrb_value self)
   memset(cares_ctx, '\0', sizeof(*cares_ctx));
   mrb_data_init(self, cares_ctx, &mrb_cares_ctx_type);
 
+#ifdef ARES_OPT_UDP_MAX_QUERIES
   struct ares_options options = {
     .udp_max_queries = ARES_GETSOCK_MAXNUM
   };
 
   if (unlikely(ares_init_options(&cares_ctx->channel, &options, ARES_OPT_UDP_MAX_QUERIES) != ARES_SUCCESS))
     mrb_raise(mrb, E_RUNTIME_ERROR, "c-ares init options failed");
-
+#else
+  if (unlikely(ares_init(&cares_ctx->channel) != ARES_SUCCESS))
+    mrb_raise(mrb, E_RUNTIME_ERROR, "c-ares init options failed");
+#endif
   cares_ctx->mrb = mrb;
   cares_ctx->cname_storage = mrb_ary_new(mrb);
   mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@cnames"), cares_ctx->cname_storage);
