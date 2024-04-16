@@ -52,8 +52,9 @@
 #define NELEMS(argv) (sizeof(argv) / sizeof(argv[0]))
 
 struct cares_ctx {
-  ares_channel channel;
   mrb_state *mrb;
+  mrb_value state_callback;
+  ares_channel channel;
   mrb_value cname_storage;
   mrb_value ai_storage;
   mrb_value error_storage;

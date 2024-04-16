@@ -1,6 +1,6 @@
 class Async::IO::IO_Uring < Async::IO::Backend
   def initialize(entries = 2048, flags = 0)
-    @uring = IO::Uring.new(entries, flags)
+    @uring = ::IO::Uring.new(entries, flags)
     @operations = []
   end
 
@@ -21,11 +21,17 @@ class Async::IO::IO_Uring < Async::IO::Backend
       fiber, operation = @operations.shift
       case operation
       when :tcp_socket, :accept
-        fiber.resume(::TCPSocket.for_fd(userdata.res))
+        socket = ::TCPSocket.for_fd(userdata.res)
+        socket._setnonblock(true)
+        fiber.resume(socket)
       when :tcp_server
-        fiber.resume(::TCPServer.for_fd(userdata.res))
+        server = ::TCPServer.for_fd(userdata.res)
+        server._setnonblock(true)
+        fiber.resume(server)
       when :socket
-        fiber.resume(::IPSocket.for_fd(userdata.res))
+        socket = ::BasicSocket.for_fd(userdata.res)
+        socket._setnonblock(true)
+        fiber.resume(socket)
       when :recv
         fiber.resume(userdata.buf)
       else

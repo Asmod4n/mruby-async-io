@@ -78,26 +78,47 @@ mrb_ares_getaddrinfo_callback(void *arg, int status, int timeouts, struct ares_a
   ares_freeaddrinfo(result);
 }
 
+static void
+mrb_ares_state_callback(void *data, ares_socket_t socket_fd, int readable, int writable)
+{
+  struct cares_ctx *cares_ctx = (struct cares_ctx *) data;
+  mrb_state *mrb = cares_ctx->mrb;
+  int arena_index = mrb_gc_arena_save(mrb);
+  struct RClass *async_ares_socket_class;
+  async_ares_socket_class = mrb_class_get_under(mrb, mrb_class_get_under(mrb, mrb_class_get(mrb, "Async"), "Ares"), "Socket");
+
+  mrb_value argv[] = {mrb_int_value(mrb, socket_fd), mrb_bool_value(readable), mrb_bool_value(writable)};
+  mrb_yield(mrb, cares_ctx->state_callback, mrb_obj_new(mrb, async_ares_socket_class, NELEMS(argv), argv));
+  mrb_gc_arena_restore(mrb, arena_index);
+}
+
 static mrb_value
 mrb_ares_new(mrb_state *mrb, mrb_value self)
 {
+  mrb_value state_callback = mrb_nil_value();
+  mrb_get_args(mrb, "&", &state_callback);
+  if (mrb_nil_p(state_callback)) {
+    mrb_raise(mrb, E_ARGUMENT_ERROR, "no block given");
+  }
+  if (MRB_TT_PROC != mrb_type(state_callback)) {
+    mrb_raise(mrb, E_TYPE_ERROR, "not a block");
+  }
+
+  mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "state_callback"), state_callback);
+
   struct cares_ctx *cares_ctx = mrb_realloc(mrb, DATA_PTR(self), sizeof(*cares_ctx));
   memset(cares_ctx, '\0', sizeof(*cares_ctx));
   mrb_data_init(self, cares_ctx, &mrb_cares_ctx_type);
-
-#ifdef ARES_OPT_UDP_MAX_QUERIES
+  cares_ctx->mrb = mrb;
+  cares_ctx->state_callback = state_callback;
   struct ares_options options = {
-    .udp_max_queries = ARES_GETSOCK_MAXNUM
+    .sock_state_cb = mrb_ares_state_callback,
+    .sock_state_cb_data = cares_ctx
   };
 
-  if (unlikely(ares_init_options(&cares_ctx->channel, &options, ARES_OPT_UDP_MAX_QUERIES) != ARES_SUCCESS))
+  if (unlikely(ares_init_options(&cares_ctx->channel, &options, ARES_OPT_SOCK_STATE_CB) != ARES_SUCCESS))
     mrb_raise(mrb, E_RUNTIME_ERROR, "c-ares init options failed");
-#else
-  if (unlikely(ares_init(&cares_ctx->channel) != ARES_SUCCESS))
-    mrb_raise(mrb, E_RUNTIME_ERROR, "c-ares init failed");
-#endif
 
-  cares_ctx->mrb = mrb;
   cares_ctx->cname_storage = mrb_ary_new(mrb);
   mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@cnames"), cares_ctx->cname_storage);
   cares_ctx->ai_storage = mrb_ary_new_capa(mrb, 1);
@@ -141,7 +162,7 @@ mrb_ares_getaddrinfo(mrb_state *mrb, mrb_value self)
     case AF_INET: {
       ares_getaddrinfo(cares_ctx->channel, node, service, &hints, mrb_ares_getaddrinfo_callback, cares_ctx);
     } break;
-    case AF_INET6: {     
+    case AF_INET6: {
       int v6_only = 0;
       optlen = sizeof(v6_only);
       getsockopt(socket, IPPROTO_IPV6, IPV6_V6ONLY, &v6_only, &optlen);
@@ -168,52 +189,6 @@ mrb_ares_timeout(mrb_state *mrb, mrb_value self)
     return mrb_nil_value();
 
   return mrb_float_value(mrb, (mrb_float) timeout->tv_sec + ((mrb_float) timeout->tv_usec / (mrb_float) USEC_PER_SEC));
-}
-
-static mrb_value
-mrb_ares_getsock(mrb_state *mrb, mrb_value self)
-{
-  mrb_value block = mrb_nil_value();
-  mrb_get_args(mrb, "|&", &block);
-
-  struct cares_ctx *cares_ctx = DATA_PTR(self);
-  ares_socket_t socks[ARES_GETSOCK_MAXNUM] = {0};
-  int bits = ares_getsock(cares_ctx->channel, socks, ARES_GETSOCK_MAXNUM);
-  if (!bits) {
-    return mrb_nil_value();
-  }
-
-  struct RClass *async_ares_socket_class = mrb_class_get_under(mrb, mrb_class(mrb, self), "Socket");
-
-  ares_socket_t sock;
-  unsigned char num = 0;
-  if (MRB_TT_PROC == mrb_type(block))  {
-    int arena_index = mrb_gc_arena_save(mrb);
-    while ((sock = socks[num])) {
-      mrb_value socket    = mrb_int_value (mrb, sock);
-      mrb_value readable  = mrb_bool_value(ARES_GETSOCK_READABLE(bits, num));
-      mrb_value writable  = mrb_bool_value(ARES_GETSOCK_WRITABLE(bits, num));
-      mrb_value argv[]    = {socket, readable, writable};
-      mrb_yield(mrb, block, mrb_obj_new(mrb, async_ares_socket_class, NELEMS(argv), argv));
-      mrb_gc_arena_restore(mrb, arena_index);
-      num++;
-    }
-  } else {
-    mrb_value sockets = mrb_ary_new_capa(mrb, 1);
-    int arena_index   = mrb_gc_arena_save(mrb);
-    while ((sock = socks[num])) {
-      mrb_value socket    = mrb_int_value (mrb, sock);
-      mrb_value readable  = mrb_bool_value(ARES_GETSOCK_READABLE(bits, num));
-      mrb_value writable  = mrb_bool_value(ARES_GETSOCK_WRITABLE(bits, num));
-      mrb_value argv[]    = {socket, readable, writable};
-      mrb_ary_push(mrb, sockets, mrb_obj_new(mrb, async_ares_socket_class, NELEMS(argv), argv));
-      mrb_gc_arena_restore(mrb, arena_index);
-      num++;
-    }
-    return sockets;
-  }
-
-  return self;
 }
 
 static mrb_value
@@ -262,7 +237,6 @@ mrb_mruby_async_io_gem_init(mrb_state* mrb)
   MRB_SET_INSTANCE_TT(mrb_async_ares_class, MRB_TT_CDATA);
   mrb_define_method(mrb,  mrb_async_ares_class, "initialize",   mrb_ares_new,         MRB_ARGS_NONE());
   mrb_define_method(mrb,  mrb_async_ares_class, "getaddrinfo",  mrb_ares_getaddrinfo, MRB_ARGS_REQ(3));
-  mrb_define_method(mrb,  mrb_async_ares_class, "getsock",      mrb_ares_getsock,     MRB_ARGS_NONE()|MRB_ARGS_BLOCK());
   mrb_define_method(mrb,  mrb_async_ares_class, "timeout",      mrb_ares_timeout,     MRB_ARGS_NONE());
   mrb_define_method(mrb,  mrb_async_ares_class, "process_fd",   mrb_ares_process_fd,  MRB_ARGS_REQ(2));
 }

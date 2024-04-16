@@ -1,22 +1,18 @@
-poll = Poll.new
+uring = IO::Uring.new
 server = TCPServer.new('::', 0)
-ares = Async::Ares.new
+server._setnonblock(true)
+ares = Async::Ares.new do |socket|
+  uring.prep_poll_add(socket, (socket.readable? ? IO::Uring::POLLIN : 0) | (socket.writable? ? IO::Uring::POLLOUT : 0))
+end
+
 ares.getaddrinfo(server, "www.ruby-lang.org", "https")
-ares.getsock do |socket|
-  poll.add(socket.socket, (socket.readable? ? Poll::In : 0) | (socket.writable? ? Poll::Out : 0))
-end
+
 while (timeout = ares.timeout)
-  res = poll.wait(timeout * 1000.0) do |pfd|
-    ares.process_fd((pfd.readable?) ? pfd.socket : -1, (pfd.writable?) ? pfd.socket : -1)
-  end
-  poll.clear
-  ares.getsock do |socket|
-    poll.add(socket.socket, (socket.readable? ? Poll::In : 0) | (socket.writable? ? Poll::Out : 0))
-  end
-  unless res
-    puts res.inspect
+  res = uring.wait(timeout) do |userdata|
+    ares.process_fd((userdata.readable?) ? userdata.sock : -1, (userdata.writable?) ? userdata.sock : -1)
   end
 end
+
 puts ares.cnames.inspect
 puts ares.ais.inspect
 puts ares.errors.inspect
